@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     TRENDING_CACHE_TTL: int = 60 * 60 * 6  # 6 hours for trending data
     
     # Azure Storage Configuration
+    AZURE_CONNECTION_STRING: str = os.getenv("AZURE_CONNECTION_STRING", "")
+    CONTAINER_NAME: str = os.getenv("CONTAINER_NAME", "")
     
     # API Settings
     API_TITLE: str = "7TV Emote API"
