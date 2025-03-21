@@ -5,8 +5,7 @@ import json
 if settings.REDIS_URL:
     redis_client = redis.from_url(
         settings.REDIS_URL,
-        decode_responses=False,
-        ssl=True
+        decode_responses=False
     )
     print("Connected to Redis using Railway REDIS_URL")
 else:
