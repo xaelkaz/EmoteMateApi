@@ -1,15 +1,22 @@
-import json
-import redis
 from app.config import settings
+import redis
+import json
 
-# Create Redis client
-redis_client = redis.Redis(
-    host=settings.REDIS_HOST,
-    port=settings.REDIS_PORT,
-    db=settings.REDIS_DB,
-    password=settings.REDIS_PASSWORD,
-    decode_responses=False  # Keep binary data as is
-)
+if settings.REDIS_URL:
+    redis_client = redis.from_url(
+        settings.REDIS_URL,
+        decode_responses=False
+    )
+    print("Connected to Redis using Railway REDIS_URL")
+else:
+    redis_client = redis.Redis(
+        host=settings.REDIS_HOST,
+        port=settings.REDIS_PORT,
+        db=settings.REDIS_DB,
+        password=settings.REDIS_PASSWORD if settings.REDIS_PASSWORD else None,
+        decode_responses=False
+    )
+    print(f"Connected to Redis at {settings.REDIS_HOST}:{settings.REDIS_PORT}")
 
 def get_cache_key(query: str, limit: int, animated_only: bool) -> str:
     """Generate a cache key based on search parameters"""
