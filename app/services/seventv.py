@@ -10,7 +10,7 @@ def fetch_7tv_emotes_api(query, limit=100, animated_only=False):
     api_url = "https://7tv.io/v3/gql"
     
     gql_query = """
-    query SearchEmotes($query: String!, $limit: Int, $filter: EmoteSearchFilter) {
+    query EmoteSearch($query: String!, $limit: Int, $filter: EmoteSearchFilter) {
       emotes(query: $query, limit: $limit, filter: $filter) {
         items {
           id
@@ -31,9 +31,18 @@ def fetch_7tv_emotes_api(query, limit=100, animated_only=False):
     """
     
     variables = {
+        "defaultSetId": "",
+        "isDefaultSetSet": False,
         "query": query,
+        "page": 1,
+        "perPage": limit,
         "limit": limit,
-        "filter": {"case_sensitive": False, "animated": animated_only if animated_only else None}
+        "sortBy": "TOP_ALL_TIME",
+        "filter": {
+            "exact_match": False,
+            "case_sensitive": False,
+            "animated": animated_only if animated_only else None
+        }
     }
     
     payload = {

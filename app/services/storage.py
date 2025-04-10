@@ -3,16 +3,49 @@ from azure.core.exceptions import ResourceNotFoundError
 from app.config import settings
 import requests
 import logging
+import os
 
-# Create the BlobServiceClient and get a container client
-blob_service_client = BlobServiceClient.from_connection_string(settings.AZURE_CONNECTION_STRING)
-container_client = blob_service_client.get_container_client(settings.CONTAINER_NAME)
+# Initialize these as None for lazy loading
+blob_service_client = None
+container_client = None
+
+def init_azure_storage():
+    """Initialize Azure Storage clients only when needed"""
+    global blob_service_client, container_client
+    
+    try:
+        azure_conn_string = settings.AZURE_CONNECTION_STRING
+        container_name = settings.CONTAINER_NAME
+        
+        if not azure_conn_string or azure_conn_string == "":
+            logging.warning("Azure Storage connection string not properly configured")
+            return False
+            
+        blob_service_client = BlobServiceClient.from_connection_string(azure_conn_string)
+        container_client = blob_service_client.get_container_client(container_name)
+        logging.info("Azure Storage initialized successfully")
+        return True
+    except Exception as e:
+        logging.error(f"Failed to initialize Azure Storage: {e}")
+        return False
+
+def azure_storage_available():
+    """Check if Azure Storage is properly configured and available"""
+    global blob_service_client, container_client
+    
+    if blob_service_client is None or container_client is None:
+        return init_azure_storage()
+    return True
 
 def upload_to_azure_blob(file_data, blob_name):
     """
     Upload binary data to Azure Blob Storage if it doesn't already exist.
-    Returns the blob URL if successful.
+    Returns the blob URL if successful, None if Azure Storage is not available.
     """
+    if not azure_storage_available():
+        logging.warning("Azure Storage not available, skipping upload")
+        return None
+        
     try:
         blob_client = container_client.get_blob_client(blob=blob_name)
         # Check if the blob already exists
@@ -31,6 +64,10 @@ def upload_to_azure_blob(file_data, blob_name):
 
 def list_blobs_with_prefix(prefix: str):
     """List all blobs with the given prefix"""
+    if not azure_storage_available():
+        logging.warning("Azure Storage not available, returning empty list")
+        return []
+        
     try:
         blobs = container_client.list_blobs(name_starts_with=prefix)
         return list(blobs)
