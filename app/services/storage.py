@@ -37,10 +37,15 @@ def azure_storage_available():
         return init_azure_storage()
     return True
 
-def upload_to_azure_blob(file_data, blob_name):
+def upload_to_azure_blob(file_data, blob_name, content_type=None):
     """
     Upload binary data to Azure Blob Storage if it doesn't already exist.
     Returns the blob URL if successful, None if Azure Storage is not available.
+    
+    Parameters:
+    - file_data: Binary data to upload
+    - blob_name: Name to give the blob in storage
+    - content_type: Optional MIME type to set for the blob (ensures proper handling)
     """
     if not azure_storage_available():
         logging.warning("Azure Storage not available, skipping upload")
@@ -55,8 +60,13 @@ def upload_to_azure_blob(file_data, blob_name):
             return blob_client.url
         except ResourceNotFoundError:
             # Blob does not exist; proceed to upload
-            blob_client.upload_blob(file_data)
-            logging.info(f"Uploaded {blob_name} to Azure Blob Storage.")
+            content_settings = None
+            if content_type:
+                from azure.storage.blob import ContentSettings
+                content_settings = ContentSettings(content_type=content_type)
+                
+            blob_client.upload_blob(file_data, content_settings=content_settings)
+            logging.info(f"Uploaded {blob_name} to Azure Blob Storage with content type: {content_type}")
             return blob_client.url
     except Exception as e:
         logging.error(f"Error uploading to Azure Blob: {e}")

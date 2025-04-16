@@ -155,47 +155,86 @@ def process_emote(emote, folder="emote_api"):
     Downloads a single emote image from 7TV and uploads it to Azure Blob Storage.
     Returns a dictionary with the emote information.
     Updated for v4 API response structure.
+    Prioritizes 4x.webp animated images.
     """
     try:
-        # Find the best image (prefer webp, then gif, then png, then avif, largest scale)
+        images = emote.get("images", [])
+        # 1. Filter for animated images (frameCount > 1)
+        animated_images = [img for img in images if img.get("frameCount", 1) > 1]
+        static_images = [img for img in images if img.get("frameCount", 1) <= 1]
+
         best_image = None
-        preferred_mimes = ["image/webp", "image/gif", "image/png", "image/avif"]
-        for mime in preferred_mimes:
-            images = [img for img in emote.get("images", []) if img["mime"] == mime]
-            if images:
-                # Pick the largest scale
-                best_image = max(images, key=lambda img: img.get("scale", 1))
+        
+        # First priority: Find 4x.webp animated image
+        for img in animated_images:
+            if img["mime"] == "image/webp" and img.get("scale", 0) == 4:
+                best_image = img
                 break
-        # Fallback to any image
-        if not best_image and emote.get("images"):
-            best_image = emote["images"][0]
+                
+        # Second priority: Any animated webp with highest scale
+        if not best_image and animated_images:
+            webp_animated = [img for img in animated_images if img["mime"] == "image/webp"]
+            if webp_animated:
+                best_image = max(webp_animated, key=lambda img: img.get("scale", 0))
+        
+        # Third priority: Any animated image with highest scale
+        if not best_image and animated_images:
+            preferred_animated_mimes = ["image/webp", "image/gif", "image/avif"]
+            for mime in preferred_animated_mimes:
+                candidates = [img for img in animated_images if img["mime"] == mime]
+                if candidates:
+                    best_image = max(candidates, key=lambda img: img.get("scale", 0))
+                    break
+                    
+        # Fourth priority: Static images if no animated are available
+        if not best_image:
+            preferred_static_mimes = ["image/webp", "image/png", "image/avif"]
+            for mime in preferred_static_mimes:
+                candidates = [img for img in static_images if img["mime"] == mime]
+                if candidates:
+                    best_image = max(candidates, key=lambda img: img.get("scale", 0))
+                    break
+                    
+        # Final fallback to any image
+        if not best_image and images:
+            best_image = images[0]
+            
         if not best_image:
             return None
+            
         url = best_image["url"]
         response = requests.get(url)
         if response.status_code != 200:
             logging.error(f"Failed to download {emote.get('defaultName', 'unknown')}: HTTP {response.status_code}")
             return None
-        # Create a safe file name
+            
+        # Ensure we keep the proper extension for the mime type
         extension = {
             "image/webp": ".webp",
             "image/gif": ".gif",
             "image/avif": ".avif",
             "image/png": ".png"
         }.get(best_image["mime"], ".png")
+        
         safe_name = "".join([c if c.isalnum() or c in "._- " else "_" for c in emote.get("defaultName", "emote")])
         file_name = f"{safe_name}{extension}"
         blob_name = f"{folder}/{file_name}"
-        blob_url = upload_to_azure_blob(response.content, blob_name)
+        
+        # Pass content type to ensure proper MIME type is set in Azure storage
+        blob_url = upload_to_azure_blob(response.content, blob_name, content_type=best_image["mime"])
+        
         if not blob_url:
             return None
+            
         return {
             "fileName": file_name,
             "url": blob_url,
             "emoteId": emote["id"],
             "emoteName": emote.get("defaultName", ""),
             "owner": emote.get("owner", {}).get("mainConnection", {}).get("platformDisplayName", ""),
-            "animated": any(img.get("frameCount", 1) > 1 for img in emote.get("images", []))
+            "animated": best_image.get("frameCount", 1) > 1,
+            "scale": best_image.get("scale", 1),
+            "mime": best_image["mime"]
         }
     except Exception as e:
         logging.error(f"Error processing emote {emote.get('defaultName', 'Unknown')}: {e}")
