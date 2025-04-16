@@ -53,16 +53,17 @@ def fetch_7tv_emotes_api(query, limit=100, animated_only=False):
     """
 
     variables = {
-        "query": query,
-        "tags": [],
-        "sortBy": "TRENDING_MONTHLY",
+        "defaultSetId": "",
         "filters": {
-            "animated": animated_only if animated_only else False
+            "animated": True
         },
+        "isDefaultSetSet": False,
         "page": 1,
         "perPage": limit,
-        "isDefaultSetSet": False,
-        "defaultSetId": ""
+        "query": query,
+        "sortBy": "TOP_ALL_TIME",
+        "tags": [],
+
     }
 
     payload = {
