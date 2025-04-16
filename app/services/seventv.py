@@ -6,58 +6,78 @@ from concurrent.futures import ThreadPoolExecutor
 from app.services.storage import upload_to_azure_blob
 
 def fetch_7tv_emotes_api(query, limit=100, animated_only=False):
-    """Fetch emotes from 7TV's API by search term."""
-    api_url = "https://7tv.io/v3/gql"
-    
+    """Fetch emotes from 7TV's v4 API by search term."""
+    api_url = "https://api.7tv.app/v4/gql"
+
     gql_query = """
-    query EmoteSearch($query: String!, $limit: Int, $filter: EmoteSearchFilter) {
-      emotes(query: $query, limit: $limit, filter: $filter) {
-        items {
-          id
-          name
-          animated
-          host {
-            url
-            files {
-              name
-              format
+    query EmoteSearch($query: String, $tags: [String!]!, $sortBy: SortBy!, $filters: Filters, $page: Int, $perPage: Int!, $isDefaultSetSet: Boolean!, $defaultSetId: Id!) {
+      emotes {
+        search(
+          query: $query
+          tags: { tags: $tags, match: ANY }
+          sort: { sortBy: $sortBy, order: DESCENDING }
+          filters: $filters
+          page: $page
+          perPage: $perPage
+        ) {
+          items {
+            id
+            defaultName
+            owner {
+              mainConnection {
+                platformDisplayName
+              }
+            }
+            images {
+              url
+              mime
+              size
+              scale
               width
-              height
+              frameCount
+            }
+            ranking(ranking: TRENDING_WEEKLY)
+            inEmoteSets(emoteSetIds: [$defaultSetId]) @include(if: $isDefaultSetSet) {
+              emoteSetId
+              emote {
+                id
+                alias
+              }
             }
           }
+          totalCount
+          pageCount
         }
       }
     }
     """
-    
+
     variables = {
-        "defaultSetId": "",
-        "isDefaultSetSet": False,
         "query": query,
+        "tags": [],
+        "sortBy": "TRENDING_MONTHLY",
+        "filters": {
+            "animated": animated_only if animated_only else False
+        },
         "page": 1,
         "perPage": limit,
-        "limit": limit,
-        "sortBy": "TOP_ALL_TIME",
-        "filter": {
-            "exact_match": False,
-            "case_sensitive": False,
-            "animated": animated_only if animated_only else None
-        }
+        "isDefaultSetSet": False,
+        "defaultSetId": ""
     }
-    
+
     payload = {
         "query": gql_query,
         "variables": variables
     }
-    
+
     headers = {
         "Content-Type": "application/json"
     }
-    
+
     try:
         response = requests.post(api_url, headers=headers, json=payload)
         if response.status_code == 200:
-            return response.json().get("data", {}).get("emotes", {}).get("items", [])
+            return response.json().get("data", {}).get("emotes", {}).get("search", {}).get("items", [])
         else:
             logging.error(f"Error from 7TV API: {response.status_code}")
             logging.error(f"Response: {response.text}")
@@ -133,64 +153,51 @@ def process_emote(emote, folder="emote_api"):
     """
     Downloads a single emote image from 7TV and uploads it to Azure Blob Storage.
     Returns a dictionary with the emote information.
-    
-    Parameters:
-    - emote: The emote data from 7TV
-    - folder: The folder in Azure Storage to save the emote (emote_api or trending_emotes)
+    Updated for v4 API response structure.
     """
     try:
-        # Get the emote URL
-        base_url = emote["host"]["url"]
-        if base_url.startswith('//'):
-            base_url = "https:" + base_url
-        
-        # Find the best file (prefer WEBP or GIF)
-        best_file = None
-        for file in emote["host"]["files"]:
-            if file["format"] in ["WEBP", "GIF"]:
-                if best_file is None or file["width"] > best_file["width"]:
-                    best_file = file
-        
-        # Fallback to the first file if no WEBP or GIF is found
-        if not best_file and emote["host"]["files"]:
-            best_file = emote["host"]["files"][0]
-        
-        if not best_file:
+        # Find the best image (prefer webp, then gif, then png, then avif, largest scale)
+        best_image = None
+        preferred_mimes = ["image/webp", "image/gif", "image/png", "image/avif"]
+        for mime in preferred_mimes:
+            images = [img for img in emote.get("images", []) if img["mime"] == mime]
+            if images:
+                # Pick the largest scale
+                best_image = max(images, key=lambda img: img.get("scale", 1))
+                break
+        # Fallback to any image
+        if not best_image and emote.get("images"):
+            best_image = emote["images"][0]
+        if not best_image:
             return None
-        
-        # Download the emote
-        url = f"{base_url}/{best_file['name']}"
+        url = best_image["url"]
         response = requests.get(url)
-        
         if response.status_code != 200:
-            logging.error(f"Failed to download {emote['name']}: HTTP {response.status_code}")
+            logging.error(f"Failed to download {emote.get('defaultName', 'unknown')}: HTTP {response.status_code}")
             return None
-        
         # Create a safe file name
-        format_map = {"WEBP": ".webp", "GIF": ".gif", "AVIF": ".avif", "PNG": ".png"}
-        extension = format_map.get(best_file["format"], ".png")
-        safe_name = "".join([c if c.isalnum() or c in "._- " else "_" for c in emote["name"]])
+        extension = {
+            "image/webp": ".webp",
+            "image/gif": ".gif",
+            "image/avif": ".avif",
+            "image/png": ".png"
+        }.get(best_image["mime"], ".png")
+        safe_name = "".join([c if c.isalnum() or c in "._- " else "_" for c in emote.get("defaultName", "emote")])
         file_name = f"{safe_name}{extension}"
-        
-        # Construct the Azure blob name with specified folder path
         blob_name = f"{folder}/{file_name}"
-        
-        # Upload to Azure Storage
         blob_url = upload_to_azure_blob(response.content, blob_name)
-        
         if not blob_url:
             return None
-            
         return {
             "fileName": file_name,
             "url": blob_url,
             "emoteId": emote["id"],
-            "emoteName": emote["name"],
-            "animated": emote.get("animated", False)
+            "emoteName": emote.get("defaultName", ""),
+            "owner": emote.get("owner", {}).get("mainConnection", {}).get("platformDisplayName", ""),
+            "animated": any(img.get("frameCount", 1) > 1 for img in emote.get("images", []))
         }
-        
     except Exception as e:
-        logging.error(f"Error processing emote {emote.get('name', 'Unknown')}: {e}")
+        logging.error(f"Error processing emote {emote.get('defaultName', 'Unknown')}: {e}")
         return None
 
 def process_emotes_batch(emotes, folder="emote_api"):
