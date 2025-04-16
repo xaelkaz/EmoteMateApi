@@ -89,6 +89,7 @@ async def get_trending_emotes_from_storage(
         # Process each blob into the required format
         processed_emotes = []
         for blob in page_blobs:
+            print("BLOP XXXX: ", blob)
             # Extract filename from the blob name
             file_name = blob.name.replace(prefix, "")
             

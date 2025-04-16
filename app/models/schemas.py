@@ -7,6 +7,7 @@ class EmoteResponse(BaseModel):
     url: str
     emoteId: str
     emoteName: str
+    animated: bool = False
 
 class SearchResponse(BaseModel):
     success: bool

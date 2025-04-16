@@ -185,7 +185,8 @@ def process_emote(emote, folder="emote_api"):
             "fileName": file_name,
             "url": blob_url,
             "emoteId": emote["id"],
-            "emoteName": emote["name"]
+            "emoteName": emote["name"],
+            "animated": emote.get("animated", False)
         }
         
     except Exception as e:
