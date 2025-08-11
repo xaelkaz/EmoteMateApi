@@ -55,7 +55,7 @@ def fetch_7tv_emotes_api(query, limit=100, animated_only=False):
     variables = {
         "defaultSetId": "",
         "filters": {
-            "animated": True
+            "animated": False
         },
         "isDefaultSetSet": False,
         "page": 1,
