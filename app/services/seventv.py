@@ -61,7 +61,7 @@ def fetch_7tv_emotes_api(query, limit=100, animated_only=False):
         "page": 1,
         "perPage": limit,
         "query": query,
-        "sortBy": "TRENDING_MONTHLY",
+        "sortBy": "TOP_ALL_TIME",
         "tags": [],
 
     }
