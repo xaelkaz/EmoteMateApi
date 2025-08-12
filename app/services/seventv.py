@@ -121,8 +121,8 @@ def fetch_7tv_trending_emotes(period="trending_weekly", limit=20, animated_only=
     """
     
     variables = {
-        "limit": limit,
-        "filter": {"animated": animated_only if animated_only else None},
+        "limit": 5,
+        "filter": {"animated": True },
         "period": period
     }
     
