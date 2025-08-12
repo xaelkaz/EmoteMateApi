@@ -1,10 +1,56 @@
 from io import BytesIO
-from typing import Tuple
+from typing import Tuple, List
 
 from PIL import Image, ImageSequence
 
 
-def resize_and_pad_webp_bytes(image_bytes: bytes, size: Tuple[int, int] = (512, 512)) -> bytes:
+def _encode_animated_webp(
+    frames: List[Image.Image],
+    durations: List[int],
+    loop: int,
+    quality: int,
+    lossless: bool,
+    minimize_size: bool = True,
+):
+    output = BytesIO()
+    frames[0].save(
+        output,
+        format="WEBP",
+        save_all=True,
+        append_images=frames[1:],
+        duration=durations,
+        loop=loop,
+        quality=quality,
+        lossless=lossless,
+        method=6,
+        minimize_size=minimize_size,
+    )
+    return output.getvalue()
+
+
+def _encode_static_webp(
+    image: Image.Image,
+    quality: int,
+    lossless: bool,
+    minimize_size: bool = True,
+):
+    output = BytesIO()
+    image.save(
+        output,
+        format="WEBP",
+        quality=quality,
+        lossless=lossless,
+        method=6,
+        minimize_size=minimize_size,
+    )
+    return output.getvalue()
+
+
+def resize_and_pad_webp_bytes(
+    image_bytes: bytes,
+    size: Tuple[int, int] = (512, 512),
+    max_bytes: int | None = None,
+) -> bytes:
     """
     Resize a WebP image (animated or static) to fit within `size`,
     maintaining aspect ratio and padding onto a transparent canvas of `size`.
@@ -35,19 +81,29 @@ def resize_and_pad_webp_bytes(image_bytes: bytes, size: Tuple[int, int] = (512, 
                 # Prefer per-frame duration if provided
                 durations.append(frame.info.get("duration", image.info.get("duration", 100)))
 
-            output = BytesIO()
-            frames[0].save(
-                output,
-                format="WEBP",
-                save_all=True,
-                append_images=frames[1:],
-                duration=durations,
-                loop=loop,
-                lossless=True,
-                method=6,
-                minimize_size=True,
-            )
-            return output.getvalue()
+            # Try progressively lower qualities to meet max_bytes if provided
+            if max_bytes is None:
+                return _encode_animated_webp(
+                    frames=frames,
+                    durations=durations,
+                    loop=loop,
+                    quality=80,
+                    lossless=False,
+                )
+
+            for quality in [80, 70, 60, 50, 40, 35, 30, 25, 20]:
+                encoded = _encode_animated_webp(
+                    frames=frames,
+                    durations=durations,
+                    loop=loop,
+                    quality=quality,
+                    lossless=False,
+                )
+                if len(encoded) <= max_bytes:
+                    return encoded
+
+            # Last resort: still return the smallest we got (lowest quality)
+            return encoded
         else:
             # Static frame path
             frame_rgba = image.convert("RGBA")
@@ -58,8 +114,15 @@ def resize_and_pad_webp_bytes(image_bytes: bytes, size: Tuple[int, int] = (512, 
             y_offset = (size[1] - frame_rgba.height) // 2
             canvas.paste(frame_rgba, (x_offset, y_offset), frame_rgba)
 
-            output = BytesIO()
-            canvas.save(output, format="WEBP", lossless=True, method=6)
-            return output.getvalue()
+            if max_bytes is None:
+                return _encode_static_webp(canvas, quality=90, lossless=False)
+
+            # Try qualities for static as well
+            for quality in [95, 90, 85, 80, 70, 60, 50, 40]:
+                encoded = _encode_static_webp(canvas, quality=quality, lossless=False)
+                if len(encoded) <= max_bytes:
+                    return encoded
+
+            return encoded
 
 

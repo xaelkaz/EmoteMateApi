@@ -213,7 +213,12 @@ def process_emote(emote, folder="emote_api"):
         processed_content = response.content
         if best_image.get("mime") == "image/webp" and best_image.get("frameCount", 1) > 1:
             try:
-                processed_content = resize_and_pad_webp_bytes(processed_content, size=(512, 512))
+                # Enforce 512x512 and max 500KB for animated stickers
+                processed_content = resize_and_pad_webp_bytes(
+                    processed_content,
+                    size=(512, 512),
+                    max_bytes=500 * 1024,
+                )
             except Exception as processing_error:
                 logging.error(f"Failed to resize animated webp for {emote.get('defaultName', 'unknown')}: {processing_error}")
             
