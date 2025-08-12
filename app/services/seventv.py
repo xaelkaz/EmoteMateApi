@@ -4,6 +4,7 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from app.services.storage import upload_to_azure_blob
+from app.services.image_processing import resize_and_pad_webp_bytes
 
 def fetch_7tv_emotes_api(query, limit=100, animated_only=False):
     """Fetch emotes from 7TV's v4 API by search term."""
@@ -207,6 +208,14 @@ def process_emote(emote, folder="emote_api"):
         if response.status_code != 200:
             logging.error(f"Failed to download {emote.get('defaultName', 'unknown')}: HTTP {response.status_code}")
             return None
+        
+        # Process animated webp to 512x512 canvas, preserving animation
+        processed_content = response.content
+        if best_image.get("mime") == "image/webp" and best_image.get("frameCount", 1) > 1:
+            try:
+                processed_content = resize_and_pad_webp_bytes(processed_content, size=(512, 512))
+            except Exception as processing_error:
+                logging.error(f"Failed to resize animated webp for {emote.get('defaultName', 'unknown')}: {processing_error}")
             
         # Ensure we keep the proper extension for the mime type
         extension = {
@@ -221,7 +230,7 @@ def process_emote(emote, folder="emote_api"):
         blob_name = f"{folder}/{file_name}"
         
         # Pass content type to ensure proper MIME type is set in Azure storage
-        blob_url = upload_to_azure_blob(response.content, blob_name, content_type=best_image["mime"])
+        blob_url = upload_to_azure_blob(processed_content, blob_name, content_type=best_image["mime"])
         
         if not blob_url:
             return None
