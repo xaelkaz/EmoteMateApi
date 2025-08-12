@@ -72,6 +72,21 @@ def upload_to_azure_blob(file_data, blob_name, content_type=None):
         logging.error(f"Error uploading to Azure Blob: {e}")
         return None
 
+
+def get_blob_url_if_exists(blob_name: str):
+    """Return blob URL if the blob exists; otherwise None."""
+    if not azure_storage_available():
+        return None
+    try:
+        blob_client = container_client.get_blob_client(blob=blob_name)
+        blob_client.get_blob_properties()
+        return blob_client.url
+    except ResourceNotFoundError:
+        return None
+    except Exception as e:
+        logging.error(f"Error checking blob existence for {blob_name}: {e}")
+        return None
+
 def list_blobs_with_prefix(prefix: str):
     """List all blobs with the given prefix"""
     if not azure_storage_available():

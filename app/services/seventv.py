@@ -3,7 +3,7 @@ import logging
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
-from app.services.storage import upload_to_azure_blob
+from app.services.storage import upload_to_azure_blob, get_blob_url_if_exists
 from app.services.image_processing import resize_and_pad_webp_bytes
 
 def fetch_7tv_emotes_api(query, limit=10, animated_only=False):
@@ -77,7 +77,7 @@ def fetch_7tv_emotes_api(query, limit=10, animated_only=False):
     }
 
     try:
-        response = requests.post(api_url, headers=headers, json=payload)
+        response = requests.post(api_url, headers=headers, json=payload, timeout=15)
         if response.status_code == 200:
             return response.json().get("data", {}).get("emotes", {}).get("search", {}).get("items", [])
         else:
@@ -136,7 +136,7 @@ def fetch_7tv_trending_emotes(period="trending_weekly", limit=20, animated_only=
     }
     
     try:
-        response = requests.post(api_url, headers=headers, json=payload)
+        response = requests.post(api_url, headers=headers, json=payload, timeout=15)
         if response.status_code == 200:
             data = response.json()
             if "errors" in data:
@@ -204,7 +204,7 @@ def process_emote(emote, folder="emote_api"):
             return None
             
         url = best_image["url"]
-        response = requests.get(url)
+        response = requests.get(url, timeout=20)
         if response.status_code != 200:
             logging.error(f"Failed to download {emote.get('defaultName', 'unknown')}: HTTP {response.status_code}")
             return None
@@ -233,6 +233,20 @@ def process_emote(emote, folder="emote_api"):
         safe_name = "".join([c if c.isalnum() or c in "._- " else "_" for c in emote.get("defaultName", "emote")])
         file_name = f"{safe_name}{extension}"
         blob_name = f"{folder}/{file_name}"
+
+        # If blob already exists, skip processing/upload and return existing URL
+        existing_url = get_blob_url_if_exists(blob_name)
+        if existing_url:
+            return {
+                "fileName": file_name,
+                "url": existing_url,
+                "emoteId": emote["id"],
+                "emoteName": emote.get("defaultName", ""),
+                "owner": emote.get("owner", {}).get("mainConnection", {}).get("platformDisplayName", ""),
+                "animated": best_image.get("frameCount", 1) > 1,
+                "scale": best_image.get("scale", 1),
+                "mime": best_image["mime"]
+            }
         
         # Pass content type to ensure proper MIME type is set in Azure storage
         blob_url = upload_to_azure_blob(processed_content, blob_name, content_type=best_image["mime"])
@@ -255,9 +269,10 @@ def process_emote(emote, folder="emote_api"):
         return None
 
 def process_emotes_batch(emotes, folder="emote_api"):
-    """Process a batch of emotes in parallel"""
+    """Process a batch of emotes in parallel with limited concurrency to avoid timeouts"""
     processed_emotes = []
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    # Reduce concurrency to avoid CPU spikes during animated webp processing
+    with ThreadPoolExecutor(max_workers=4) as executor:
         results = list(executor.map(lambda e: process_emote(e, folder), emotes))
         processed_emotes = [result for result in results if result]
     return processed_emotes
