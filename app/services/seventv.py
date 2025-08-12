@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from app.services.storage import upload_to_azure_blob
 from app.services.image_processing import resize_and_pad_webp_bytes
 
-def fetch_7tv_emotes_api(query, limit=100, animated_only=False):
+def fetch_7tv_emotes_api(query, limit=10, animated_only=False):
     """Fetch emotes from 7TV's v4 API by search term."""
     api_url = "https://api.7tv.app/v4/gql"
 
@@ -121,8 +121,8 @@ def fetch_7tv_trending_emotes(period="trending_weekly", limit=20, animated_only=
     """
     
     variables = {
-        "limit": 5,
-        "filter": {"animated": True },
+        "limit": limit,
+        "filter": {"animated": animated_only if animated_only else None},
         "period": period
     }
     
