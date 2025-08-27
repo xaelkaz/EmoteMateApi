@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Request
 from app.services.cache import redis_client
 from app.middleware import limiter
+from redis.exceptions import RedisError
 
 router = APIRouter(
     prefix="/api/cache",
@@ -12,23 +13,26 @@ router = APIRouter(
 async def cache_status(request: Request):
     """Get current cache status"""
     try:
-        # Get Redis info
-        info = redis_client.info()
-        keys_count = redis_client.dbsize()
+        # Get Redis info (async)
+        info = await redis_client.info()
+        keys_count = await redis_client.dbsize()
         
-        # Get counts for different key types
-        emote_search_keys = len(redis_client.keys("emote_search:*"))
-        trending_keys = len(redis_client.keys("trending:*"))
+        # Get counts for different key types (async gather for keys)
+        import asyncio
+        emote_search_keys, trending_keys = await asyncio.gather(
+            redis_client.keys("emote_search:*"),
+            redis_client.keys("trending:*")
+        )
         
         return {
             "status": "connected",
             "totalKeys": keys_count,
-            "emoteSearchKeys": emote_search_keys,
-            "trendingKeys": trending_keys,
+            "emoteSearchKeys": len(emote_search_keys),
+            "trendingKeys": len(trending_keys),
             "usedMemory": f"{info['used_memory_human']}",
             "hitRatio": info.get('keyspace_hits', 0) / (info.get('keyspace_hits', 0) + info.get('keyspace_misses', 1)) * 100 if info.get('keyspace_hits', 0) > 0 else 0
         }
-    except redis.RedisError as e:
+    except RedisError as e:
         return {
             "status": "error",
             "message": str(e)
@@ -59,21 +63,23 @@ async def clear_cache(request: Request, cache_type: str = "all"):
                 "message": "Invalid cache_type. Options are: all, search, trending"
             }
         
-        # Find all keys matching the pattern
+        # Find all keys matching the pattern (async)
+        import asyncio
         all_keys = []
         for p in pattern.split("|"):
-            all_keys.extend(redis_client.keys(p))
+            keys = await redis_client.keys(p)
+            all_keys.extend(keys)
         
         # Delete the keys if any exist
         if all_keys:
-            redis_client.delete(*all_keys)
+            await redis_client.delete(*all_keys)
         
         return {
             "success": True,
             "message": f"Cache cleared. {len(all_keys)} entries removed.",
             "type": cache_type
         }
-    except redis.RedisError as e:
+    except RedisError as e:
         return {
             "success": False,
             "message": f"Error clearing cache: {str(e)}"

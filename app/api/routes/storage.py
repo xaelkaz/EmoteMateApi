@@ -19,15 +19,11 @@ async def get_trending_emotes_from_storage(
 ):
     """
     Get trending emotes directly from Azure Storage.
-    This endpoint bypasses the 7TV API and retrieves files directly from the 'trending_emotes' folder.
-    
-    - limit: Number of emotes per page (max 100)
-    - page: Page number (starts at 1)
     """
     start_time = time.time()
     
-    # Check if Azure Storage is available
-    if not azure_storage_available():
+    # Check if Azure Storage is available (async)
+    if not await azure_storage_available():
         return SearchResponse(
             success=False,
             totalFound=0,
@@ -41,11 +37,11 @@ async def get_trending_emotes_from_storage(
         )
     
     try:
-        # List all blobs in the trending_emotes folder
+        # List all blobs in the trending_emotes folder (async)
         prefix = "trending_emotes/"
-        blob_list = list_blobs_with_prefix(prefix)
+        blob_list = await list_blobs_with_prefix(prefix)
         
-        # Sort by name to ensure consistent ordering
+        # Sort by name
         blob_list.sort(key=lambda b: b.name)
         
         if not blob_list:
@@ -61,15 +57,13 @@ async def get_trending_emotes_from_storage(
             }
             return SearchResponse(**response_data)
         
-        # Calculate pagination
+        # Pagination
         total_found = len(blob_list)
-        total_pages = (total_found + limit - 1) // limit  # Ceiling division
+        total_pages = (total_found + limit - 1) // limit
         
-        # Extract just the blobs for the current page
         start_idx = (page - 1) * limit
         end_idx = min(start_idx + limit, total_found)
         
-        # Check if requested page is valid
         if start_idx >= total_found:
             response_data = {
                 "success": False,
@@ -86,25 +80,18 @@ async def get_trending_emotes_from_storage(
         
         page_blobs = blob_list[start_idx:end_idx]
         
-        # Process each blob into the required format
+        # Process blobs
         processed_emotes = []
         for blob in page_blobs:
-            # Extract filename from the blob name
             file_name = blob.name.replace(prefix, "")
-            
-            # Skip empty filenames or folders
             if not file_name or file_name.endswith('/'):
                 continue
                 
-            # Get the blob URL
             blob_client = container_client.get_blob_client(blob.name)
-            blob_url = blob_client.url
+            blob_url = blob_client.url  # URL is sync property
             
-            # Try to extract emote name from filename (remove extension)
             emote_name = os.path.splitext(file_name)[0]
-            
-            # Create a pseudo-ID if we don't have the actual 7TV ID
-            emote_id = f"storage_{hash(blob.name) % 10000000}"  # Simple hash for ID
+            emote_id = f"storage_{hash(blob.name) % 10000000}"
             
             processed_emotes.append({
                 "fileName": file_name,
@@ -148,15 +135,10 @@ async def get_emotes_from_storage(
 ):
     """
     Get emotes directly from Azure Storage.
-    This endpoint bypasses the 7TV API and retrieves files directly from the 'emote_api' folder.
-    
-    - limit: Number of emotes per page (max 100)
-    - page: Page number (starts at 1)
     """
     start_time = time.time()
     
-    # Check if Azure Storage is available
-    if not azure_storage_available():
+    if not await azure_storage_available():
         return SearchResponse(
             success=False,
             totalFound=0,
@@ -170,11 +152,9 @@ async def get_emotes_from_storage(
         )
     
     try:
-        # List all blobs in the emote_api folder
         prefix = "emote_api/"
-        blob_list = list_blobs_with_prefix(prefix)
+        blob_list = await list_blobs_with_prefix(prefix)
         
-        # Sort by name to ensure consistent ordering
         blob_list.sort(key=lambda b: b.name)
         
         if not blob_list:
@@ -190,15 +170,12 @@ async def get_emotes_from_storage(
             }
             return SearchResponse(**response_data)
         
-        # Calculate pagination
         total_found = len(blob_list)
-        total_pages = (total_found + limit - 1) // limit  # Ceiling division
+        total_pages = (total_found + limit - 1) // limit
         
-        # Extract just the blobs for the current page
         start_idx = (page - 1) * limit
         end_idx = min(start_idx + limit, total_found)
         
-        # Check if requested page is valid
         if start_idx >= total_found:
             response_data = {
                 "success": False,
@@ -215,25 +192,17 @@ async def get_emotes_from_storage(
         
         page_blobs = blob_list[start_idx:end_idx]
         
-        # Process each blob into the required format
         processed_emotes = []
         for blob in page_blobs:
-            # Extract filename from the blob name
             file_name = blob.name.replace(prefix, "")
-            
-            # Skip empty filenames or folders
             if not file_name or file_name.endswith('/'):
                 continue
                 
-            # Get the blob URL
             blob_client = container_client.get_blob_client(blob.name)
             blob_url = blob_client.url
             
-            # Try to extract emote name from filename (remove extension)
             emote_name = os.path.splitext(file_name)[0]
-            
-            # Create a pseudo-ID if we don't have the actual 7TV ID
-            emote_id = f"storage_{hash(blob.name) % 10000000}"  # Simple hash for ID
+            emote_id = f"storage_{hash(blob.name) % 10000000}"
             
             processed_emotes.append({
                 "fileName": file_name,

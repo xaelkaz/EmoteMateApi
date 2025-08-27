@@ -25,6 +25,7 @@ class SearchRequest(BaseModel):
     query: str
     limit: Optional[int] = Field(100, ge=1, le=200)
     animated_only: Optional[bool] = False
+    page: Optional[int] = Field(1, ge=1)  # Added for future pagination
 
 class TrendingPeriod(str, Enum):
     daily = "trending_daily"
