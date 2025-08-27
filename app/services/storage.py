@@ -1,16 +1,15 @@
-from azure.storage.blob import BlobServiceClient
+from azure.storage.blob import ContentSettings
+from azure.storage.blob.aio import BlobServiceClient, ContainerClient
 from azure.core.exceptions import ResourceNotFoundError
 from app.config import settings
-import requests
 import logging
-import os
 
 # Initialize these as None for lazy loading
-blob_service_client = None
-container_client = None
+blob_service_client: BlobServiceClient = None
+container_client: ContainerClient = None
 
-def init_azure_storage():
-    """Initialize Azure Storage clients only when needed"""
+async def init_azure_storage():
+    """Initialize Azure Storage clients only when needed (async)"""
     global blob_service_client, container_client
     
     try:
@@ -29,58 +28,51 @@ def init_azure_storage():
         logging.error(f"Failed to initialize Azure Storage: {e}")
         return False
 
-def azure_storage_available():
+async def azure_storage_available():
     """Check if Azure Storage is properly configured and available"""
     global blob_service_client, container_client
     
     if blob_service_client is None or container_client is None:
-        return init_azure_storage()
+        return await init_azure_storage()
     return True
 
-def upload_to_azure_blob(file_data, blob_name, content_type=None):
+async def upload_to_azure_blob(file_data, blob_name, content_type=None):
     """
     Upload binary data to Azure Blob Storage if it doesn't already exist.
     Returns the blob URL if successful, None if Azure Storage is not available.
-    
-    Parameters:
-    - file_data: Binary data to upload
-    - blob_name: Name to give the blob in storage
-    - content_type: Optional MIME type to set for the blob (ensures proper handling)
     """
-    if not azure_storage_available():
+    if not await azure_storage_available():
         logging.warning("Azure Storage not available, skipping upload")
         return None
         
     try:
         blob_client = container_client.get_blob_client(blob=blob_name)
-        # Check if the blob already exists
+        # Check if the blob already exists (async)
         try:
-            blob_client.get_blob_properties()
+            await blob_client.get_blob_properties()
             logging.info(f"Blob {blob_name} already exists in Azure Blob Storage.")
             return blob_client.url
         except ResourceNotFoundError:
             # Blob does not exist; proceed to upload
-            content_settings = None
-            if content_type:
-                from azure.storage.blob import ContentSettings
-                content_settings = ContentSettings(content_type=content_type)
-                
-            blob_client.upload_blob(file_data, content_settings=content_settings)
+            content_settings = ContentSettings(content_type=content_type) if content_type else None
+            await blob_client.upload_blob(file_data, content_settings=content_settings)
             logging.info(f"Uploaded {blob_name} to Azure Blob Storage with content type: {content_type}")
             return blob_client.url
     except Exception as e:
         logging.error(f"Error uploading to Azure Blob: {e}")
         return None
 
-def list_blobs_with_prefix(prefix: str):
-    """List all blobs with the given prefix"""
-    if not azure_storage_available():
+async def list_blobs_with_prefix(prefix: str):
+    """List all blobs with the given prefix (async)"""
+    if not await azure_storage_available():
         logging.warning("Azure Storage not available, returning empty list")
         return []
         
     try:
-        blobs = container_client.list_blobs(name_starts_with=prefix)
-        return list(blobs)
+        blobs = []
+        async for blob in container_client.list_blobs(name_starts_with=prefix):
+            blobs.append(blob)
+        return blobs
     except Exception as e:
         logging.error(f"Error listing blobs with prefix {prefix}: {e}")
         return []

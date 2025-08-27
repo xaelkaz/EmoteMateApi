@@ -1,12 +1,11 @@
-import requests
+import aiohttp
 import logging
 import os
-import time
-from concurrent.futures import ThreadPoolExecutor
 from app.services.storage import upload_to_azure_blob
+import asyncio
 
-def fetch_7tv_emotes_api(query, limit=100, animated_only=False):
-    """Fetch emotes from 7TV's v4 API by search term."""
+async def fetch_7tv_emotes_api(query, limit=100, animated_only=False, session: aiohttp.ClientSession = None):
+    """Fetch emotes from 7TV's v4 API by search term (async)."""
     api_url = "https://api.7tv.app/v4/gql"
 
     gql_query = """
@@ -63,7 +62,6 @@ def fetch_7tv_emotes_api(query, limit=100, animated_only=False):
         "query": query,
         "sortBy": "TOP_ALL_TIME",
         "tags": [],
-
     }
 
     payload = {
@@ -76,25 +74,21 @@ def fetch_7tv_emotes_api(query, limit=100, animated_only=False):
     }
 
     try:
-        response = requests.post(api_url, headers=headers, json=payload)
-        if response.status_code == 200:
-            return response.json().get("data", {}).get("emotes", {}).get("search", {}).get("items", [])
-        else:
-            logging.error(f"Error from 7TV API: {response.status_code}")
-            logging.error(f"Response: {response.text}")
-            return []
+        async with session.post(api_url, headers=headers, json=payload) as response:
+            if response.status == 200:
+                data = await response.json()
+                return data.get("data", {}).get("emotes", {}).get("search", {}).get("items", [])
+            else:
+                logging.error(f"Error from 7TV API: {response.status}")
+                logging.error(f"Response: {await response.text()}")
+                return []
     except Exception as e:
         logging.error(f"Exception in fetch_7tv_emotes_api: {e}")
         return []
 
-def fetch_7tv_trending_emotes(period="trending_weekly", limit=20, animated_only=False):
+async def fetch_7tv_trending_emotes(period="trending_weekly", limit=20, animated_only=False, session: aiohttp.ClientSession = None):
     """
-    Fetch trending emotes from 7TV's API.
-    
-    Parameters:
-    - period: The trending period (trending_daily, trending_weekly, trending_monthly, or popularity)
-    - limit: Number of emotes to fetch
-    - animated_only: Whether to fetch only animated emotes
+    Fetch trending emotes from 7TV's API (async).
     """
     api_url = "https://7tv.io/v3/gql"
     
@@ -135,80 +129,64 @@ def fetch_7tv_trending_emotes(period="trending_weekly", limit=20, animated_only=
     }
     
     try:
-        response = requests.post(api_url, headers=headers, json=payload)
-        if response.status_code == 200:
-            data = response.json()
-            if "errors" in data:
-                logging.error(f"GraphQL errors: {data['errors']}")
+        async with session.post(api_url, headers=headers, json=payload) as response:
+            if response.status == 200:
+                data = await response.json()
+                if "errors" in data:
+                    logging.error(f"GraphQL errors: {data['errors']}")
+                    return []
+                return data.get("data", {}).get("emotes", {}).get("items", [])
+            else:
+                logging.error(f"Error from 7TV API: {response.status}")
+                logging.error(f"Response: {await response.text()}")
                 return []
-            return data.get("data", {}).get("emotes", {}).get("items", [])
-        else:
-            logging.error(f"Error from 7TV API: {response.status_code}")
-            logging.error(f"Response: {response.text}")
-            return []
     except Exception as e:
         logging.error(f"Exception in fetch_7tv_trending_emotes: {e}")
         return []
 
-def process_emote(emote, folder="emote_api"):
+def select_best_image(images):
+    """Streamlined image selection with priorities."""
+    def filter_animated_webp_scale4(img):
+        return img["mime"] == "image/webp" and img.get("scale") == 4 and img.get("frameCount", 1) > 1
+    
+    def filter_animated_webp(img):
+        return img["mime"] == "image/webp" and img.get("frameCount", 1) > 1
+    
+    def filter_animated(img):
+        return img.get("frameCount", 1) > 1
+    
+    priorities = [
+        (filter_animated_webp_scale4, max),
+        (filter_animated_webp, max),
+        (filter_animated, max),
+        (lambda img: True, max)  # Fallback any image
+    ]
+    for filter_fn, agg_fn in priorities:
+        candidates = [img for img in images if filter_fn(img)]
+        if candidates:
+            return agg_fn(candidates, key=lambda img: img.get("scale", 0))
+    return None
+
+async def process_emote(emote, folder="emote_api", session: aiohttp.ClientSession = None):
     """
-    Downloads a single emote image from 7TV and uploads it to Azure Blob Storage.
+    Downloads a single emote image from 7TV and uploads it to Azure Blob Storage (async).
     Returns a dictionary with the emote information.
-    Updated for v4 API response structure.
-    Prioritizes 4x.webp animated images.
     """
     try:
         images = emote.get("images", [])
-        # 1. Filter for animated images (frameCount > 1)
-        animated_images = [img for img in images if img.get("frameCount", 1) > 1]
-        static_images = [img for img in images if img.get("frameCount", 1) <= 1]
-
-        best_image = None
+        best_image = select_best_image(images)
         
-        # First priority: Find 4x.webp animated image
-        for img in animated_images:
-            if img["mime"] == "image/webp" and img.get("scale", 0) == 4:
-                best_image = img
-                break
-                
-        # Second priority: Any animated webp with highest scale
-        if not best_image and animated_images:
-            webp_animated = [img for img in animated_images if img["mime"] == "image/webp"]
-            if webp_animated:
-                best_image = max(webp_animated, key=lambda img: img.get("scale", 0))
-        
-        # Third priority: Any animated image with highest scale
-        if not best_image and animated_images:
-            preferred_animated_mimes = ["image/webp", "image/gif", "image/avif"]
-            for mime in preferred_animated_mimes:
-                candidates = [img for img in animated_images if img["mime"] == mime]
-                if candidates:
-                    best_image = max(candidates, key=lambda img: img.get("scale", 0))
-                    break
-                    
-        # Fourth priority: Static images if no animated are available
-        if not best_image:
-            preferred_static_mimes = ["image/webp", "image/png", "image/avif"]
-            for mime in preferred_static_mimes:
-                candidates = [img for img in static_images if img["mime"] == mime]
-                if candidates:
-                    best_image = max(candidates, key=lambda img: img.get("scale", 0))
-                    break
-                    
-        # Final fallback to any image
-        if not best_image and images:
-            best_image = images[0]
-            
         if not best_image:
             return None
             
         url = best_image["url"]
-        response = requests.get(url)
-        if response.status_code != 200:
-            logging.error(f"Failed to download {emote.get('defaultName', 'unknown')}: HTTP {response.status_code}")
-            return None
+        async with session.get(url) as response:
+            if response.status != 200:
+                logging.error(f"Failed to download {emote.get('defaultName', 'unknown')}: HTTP {response.status}")
+                return None
+            file_data = await response.read()
             
-        # Ensure we keep the proper extension for the mime type
+        # Ensure proper extension
         extension = {
             "image/webp": ".webp",
             "image/gif": ".gif",
@@ -220,8 +198,8 @@ def process_emote(emote, folder="emote_api"):
         file_name = f"{safe_name}{extension}"
         blob_name = f"{folder}/{file_name}"
         
-        # Pass content type to ensure proper MIME type is set in Azure storage
-        blob_url = upload_to_azure_blob(response.content, blob_name, content_type=best_image["mime"])
+        # Upload async with content type
+        blob_url = await upload_to_azure_blob(file_data, blob_name, content_type=best_image["mime"])
         
         if not blob_url:
             return None
@@ -240,10 +218,10 @@ def process_emote(emote, folder="emote_api"):
         logging.error(f"Error processing emote {emote.get('defaultName', 'Unknown')}: {e}")
         return None
 
-def process_emotes_batch(emotes, folder="emote_api"):
-    """Process a batch of emotes in parallel"""
-    processed_emotes = []
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        results = list(executor.map(lambda e: process_emote(e, folder), emotes))
-        processed_emotes = [result for result in results if result]
+async def process_emotes_batch(emotes, folder="emote_api"):
+    """Process a batch of emotes in parallel (async)"""
+    async with aiohttp.ClientSession() as session:
+        tasks = [process_emote(emote, folder, session) for emote in emotes]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        processed_emotes = [r for r in results if r and not isinstance(r, Exception)]
     return processed_emotes

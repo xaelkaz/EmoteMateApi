@@ -4,6 +4,8 @@ from app.services.seventv import fetch_7tv_emotes_api, process_emotes_batch
 from app.services.cache import get_cache_key, get_from_cache, save_to_cache
 from app.middleware import limiter
 import time
+import aiohttp
+import asyncio
 
 router = APIRouter(
     prefix="/api",
@@ -22,26 +24,28 @@ async def search_emotes(request: Request, search_request: SearchRequest):
     if not search_request.query:
         raise HTTPException(status_code=400, detail="Query parameter is required")
     
-    # Check cache first
+    # Check cache first (async)
     cache_key = get_cache_key(
         search_request.query, 
         search_request.limit, 
-        search_request.animated_only
+        search_request.animated_only,
+        search_request.page
     )
     
-    cached_data = get_from_cache(cache_key)
+    cached_data = await get_from_cache(cache_key)
     if cached_data:
-        # Add processing time to the cached response
         cached_data["processingTime"] = time.time() - start_time
         cached_data["cached"] = True
         return SearchResponse(**cached_data)
     
-    # Fetch emotes from 7TV API
-    emotes = fetch_7tv_emotes_api(
-        query=search_request.query, 
-        limit=search_request.limit,
-        animated_only=search_request.animated_only
-    )
+    # For pagination, adjust fetch (assuming 7TV supports page in variables)
+    async with aiohttp.ClientSession() as session:
+        emotes = await fetch_7tv_emotes_api(
+            query=search_request.query, 
+            limit=search_request.limit,
+            animated_only=search_request.animated_only,
+            session=session
+        )
     
     if not emotes:
         response_data = {
@@ -49,22 +53,26 @@ async def search_emotes(request: Request, search_request: SearchRequest):
             "totalFound": 0,
             "emotes": [],
             "message": "No emotes found for the given query",
-            "processingTime": time.time() - start_time
+            "processingTime": time.time() - start_time,
+            "page": search_request.page,
+            "totalPages": 1  # Adjust if paginated
         }
-        save_to_cache(cache_key, response_data)
+        await save_to_cache(cache_key, response_data)
         return SearchResponse(**response_data)
     
-    # Process emotes in parallel
-    processed_emotes = process_emotes_batch(emotes, "emote_api")
+    # Process emotes in parallel (async)
+    processed_emotes = await process_emotes_batch(emotes, "emote_api")
     
     response_data = {
         "success": True,
         "totalFound": len(emotes),
         "emotes": processed_emotes,
-        "processingTime": time.time() - start_time
+        "processingTime": time.time() - start_time,
+        "page": search_request.page,
+        "totalPages": 1  # Adjust if needed
     }
     
-    # Save to cache
-    save_to_cache(cache_key, response_data)
+    # Save to cache (async)
+    await save_to_cache(cache_key, response_data)
     
     return SearchResponse(**response_data)
